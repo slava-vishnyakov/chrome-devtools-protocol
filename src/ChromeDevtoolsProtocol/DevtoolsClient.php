@@ -34,6 +34,12 @@ class DevtoolsClient implements DevtoolsClientInterface, InternalClientInterface
 	/** @var object[][] */
 	private $eventBuffers = [];
 
+	/** @var array method => waitersCount */
+	private $awaitMethods = [];
+
+	/** @var array method => message to bubble upstream */
+	private $awaitMessages = [];
+
 	public function __construct(string $wsUrl)
 	{
 		$this->wsClient = new WebSocketClient($wsUrl, "http://" . parse_url($wsUrl, PHP_URL_HOST));
@@ -129,9 +135,30 @@ class DevtoolsClient implements DevtoolsClientInterface, InternalClientInterface
 			throw new ErrorException($message->error->message, $message->error->code);
 
 		} else if (isset($message->method)) {
+			if (isset($this->awaitMethods[$message->method]) && $this->awaitMethods[$message->method] > 0) {
+				$this->awaitMessages[$message->method] [] = $message;
+
+				return null;
+			}
+
 			if (isset($this->listeners[$message->method])) {
+				if ($returnIfEventMethod !== null) {
+					if (!isset($this->awaitMethods[$returnIfEventMethod])) {
+						$this->awaitMethods[$returnIfEventMethod] = 1;
+					} else {
+						$this->awaitMethods[$returnIfEventMethod]++;
+					}
+				}
+
 				foreach ($this->listeners[$message->method] as $callback) {
 					$callback($message->params);
+				}
+
+				if ($returnIfEventMethod !== null && count($this->awaitMessages[$returnIfEventMethod]) > 0) {
+					$message = array_shift($this->awaitMessages[$returnIfEventMethod]);
+					$this->awaitMethods[$returnIfEventMethod]--;
+
+					return $message;
 				}
 			}
 
